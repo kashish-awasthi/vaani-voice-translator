@@ -1,0 +1,10 @@
+faster-whisper==1.2.1
+fastapi==0.143.2
+uvicorn[standard]==0.54.0
+numpy==2.5.4
+requests==2.34.2
+websockets==17.2
+
+# tests
+pytest
+httpx

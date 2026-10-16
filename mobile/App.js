@@ -1,0 +1,255 @@
+import {
+  PlayfairDisplay_400Regular_Italic,
+  PlayfairDisplay_600SemiBold,
+  PlayfairDisplay_700Bold,
+} from '@expo-google-fonts/playfair-display';
+import { Ionicons } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
+import * as Speech from 'expo-speech';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { Background } from './src/components/Background';
+import { EmptyState } from './src/components/EmptyState';
+import { LanguageBar } from './src/components/LanguageBar';
+import { LiveCaption } from './src/components/LiveCaption';
+import { MessageBubble } from './src/components/MessageBubble';
+import { MicButton } from './src/components/MicButton';
+import { ModeSwitch } from './src/components/ModeSwitch';
+import { Pipeline } from './src/components/Pipeline';
+import { SettingsSheet } from './src/components/SettingsSheet';
+import { Sheen } from './src/components/Sheen';
+import { Waveform } from './src/components/Waveform';
+import { DEFAULT_SERVER_URL } from './src/config';
+import { getLanguage, voiceFor } from './src/languages';
+import { colors, fonts, type } from './src/theme';
+import { useMicrophone } from './src/useMicrophone';
+import { useTranslator } from './src/useTranslator';
+
+export default function App() {
+  const [fontsLoaded] = useFonts({ PlayfairDisplay_400Regular_Italic, PlayfairDisplay_600SemiBold, PlayfairDisplay_700Bold });
+
+  return (
+    <SafeAreaProvider>
+      <StatusBar style="dark" />
+      <View style={{ flex: 1, backgroundColor: colors.background, overflow: 'hidden' }}>
+        <Background />
+        {fontsLoaded && <TranslatorScreen />}
+      </View>
+    </SafeAreaProvider>
+  );
+}
+
+function TranslatorScreen() {
+  const insets = useSafeAreaInsets();
+  const [mode, setMode] = useState('two-way'); // 'two-way' conversation, or 'one-way' captions
+  const [langA, setLangA] = useState('en');
+  const [langB, setLangB] = useState('hi');
+  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localError, setLocalError] = useState(null);
+  const [speaking, setSpeaking] = useState(false); // true while the phone reads a translation aloud
+
+  const translator = useTranslator();
+  const level = useRef(new Animated.Value(0)).current; // microphone loudness 0..1, drives the mic glow
+  const levelRef = useRef(0); // same value, read by the waveform
+  const speakingCount = useRef(0); // > 0 while the phone is reading a translation aloud
+  const autoSpeakRef = useRef(autoSpeak);
+  autoSpeakRef.current = autoSpeak;
+
+  const mic = useMicrophone((chunk) => {
+    const loud = loudness(chunk);
+    levelRef.current = loud;
+    level.setValue(loud);
+    // don't send audio while the phone is speaking, or it would translate its own voice
+    if (speakingCount.current === 0) translator.sendAudio(chunk);
+  });
+
+  function speak(text, language) {
+    speakingCount.current += 1;
+    setSpeaking(true);
+    const done = () => {
+      speakingCount.current = Math.max(0, speakingCount.current - 1);
+      if (speakingCount.current === 0) setSpeaking(false);
+    };
+    Speech.speak(text, { language: voiceFor(language), onDone: done, onStopped: done, onError: done });
+  }
+
+  function onFinal(msg) {
+    if (autoSpeakRef.current && msg.translation) speak(msg.translation, msg.target);
+  }
+
+  const live = translator.status === 'live';
+
+  async function toggleListening() {
+    setLocalError(null);
+    if (live) {
+      mic.stop();
+      levelRef.current = 0;
+      level.setValue(0);
+      translator.finish();
+      return;
+    }
+    if (langA === langB) {
+      setLocalError('Pick two different languages.');
+      return;
+    }
+    // two-way: Whisper picks between A and B and the server translates to the other one
+    // one-way: always A -> B
+    const languages = mode === 'two-way' ? [langA, langB] : [langA];
+    const target = mode === 'two-way' ? null : langB;
+    try {
+      await translator.connect(serverUrl, languages, target, onFinal);
+      await mic.start();
+    } catch (e) {
+      translator.disconnect();
+      if (e.message !== 'connection failed') setLocalError(e.message);
+    }
+  }
+
+  useEffect(() => () => mic.stop(), []); // stop the microphone if the app closes while listening
+
+  const scrollRef = useRef(null);
+  const error = localError || translator.error;
+  const { messages, partial } = translator;
+
+  // which pipeline step is happening right now: 0 Listen, 1 Whisper, 2 Translate, 3 Speak
+  const stage = speaking ? 3 : translator.status === 'finishing' ? 2 : partial.text ? 1 : live ? 0 : -1;
+  const avgSeconds = messages.length
+    ? (messages.reduce((sum, m) => sum + m.timing_ms.speech + m.timing_ms.translate, 0) / messages.length / 1000).toFixed(1)
+    : null;
+
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top + 6 }]}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <View style={styles.brandRow}>
+            <Text style={styles.brand}>Vaani</Text>
+            <Sheen radius={6} width={0} style={styles.brandDot} />
+          </View>
+          <Text style={styles.tagline}>Live voice translator</Text>
+        </View>
+        <StatusPill status={translator.status} />
+        <Pressable onPress={() => setSettingsOpen(true)} style={styles.iconButton} hitSlop={8}>
+          <Ionicons name="options-outline" size={20} color={colors.ink} />
+        </Pressable>
+      </View>
+
+      {/* Mode + languages */}
+      <View style={styles.controls}>
+        <ModeSwitch value={mode} onChange={setMode} disabled={live} />
+        <LanguageBar mode={mode} langA={langA} langB={langB} onChangeA={setLangA} onChangeB={setLangB} disabled={live} />
+      </View>
+
+      {/* Conversation */}
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.conversation}
+        onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+        showsVerticalScrollIndicator={false}
+      >
+        {messages.length > 0 && (
+          // session summary: handy numbers for demos and screenshots
+          <Text style={styles.stats}>
+            {messages.length} {messages.length === 1 ? 'sentence' : 'sentences'} · avg {avgSeconds}s ·{' '}
+            {getLanguage(langA).code.toUpperCase()} {mode === 'two-way' ? '⇄' : '→'} {getLanguage(langB).code.toUpperCase()}
+          </Text>
+        )}
+        {messages.length === 0
+          ? !live && <EmptyState mode={mode} />
+          : messages.map((msg) => (
+              <MessageBubble
+                key={msg.key}
+                msg={msg}
+                right={mode === 'two-way' && msg.lang === langB}
+                onReplay={() => speak(msg.translation, msg.target)}
+              />
+            ))}
+      </ScrollView>
+
+      {stage >= 0 && (
+        <View style={styles.pipeline}>
+          <Pipeline active={stage} />
+        </View>
+      )}
+      <LiveCaption text={partial.text} lang={partial.lang} listening={live} />
+
+      {error ? (
+        <View style={styles.error}>
+          <Ionicons name="alert-circle" size={18} color={colors.danger} />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+
+      {/* Microphone */}
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 6 }]}>
+        {live ? <Waveform levelRef={levelRef} active={live} /> : <Text style={styles.hint}>{hintText(translator.status)}</Text>}
+        <MicButton status={translator.status} level={level} onPress={toggleListening} />
+      </View>
+
+      <SettingsSheet
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        serverUrl={serverUrl}
+        onServerUrl={setServerUrl}
+        autoSpeak={autoSpeak}
+        onAutoSpeak={setAutoSpeak}
+        onClear={translator.clear}
+      />
+    </View>
+  );
+}
+
+function StatusPill({ status }) {
+  const live = status === 'live';
+  const color = live ? colors.live : status === 'idle' ? colors.dim : colors.gold;
+  const label = { idle: 'Offline', connecting: 'Connecting', live: 'Live', finishing: 'Finishing' }[status];
+  return (
+    <View style={styles.pill}>
+      <View style={[styles.pillDot, { backgroundColor: color }]} />
+      <Text style={[styles.pillText, live && { color: colors.live }]}>{label}</Text>
+    </View>
+  );
+}
+
+function hintText(status) {
+  if (status === 'connecting') return 'Connecting to server…';
+  if (status === 'finishing') return 'Finishing the last sentence…';
+  return 'Tap to start speaking';
+}
+
+// how loud a chunk of 16-bit audio is, scaled to 0..1 for the animations
+function loudness(chunk) {
+  const samples = new Int16Array(chunk);
+  if (samples.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 4) sum += samples[i] * samples[i];
+  const rms = Math.sqrt(sum / Math.ceil(samples.length / 4)) / 32768;
+  return Math.min(1, rms * 8);
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, marginBottom: 14 },
+  brandRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
+  brand: { color: colors.ink, fontFamily: fonts.serifBold, fontSize: 36, lineHeight: 42 },
+  brandDot: { width: 9, height: 9, marginBottom: 10 },
+  tagline: { color: colors.muted, fontSize: 12, ...type.medium },
+  iconButton: { width: 42, height: 42, borderRadius: 15, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  pillDot: { width: 7, height: 7, borderRadius: 4 },
+  pillText: { fontSize: 12, color: colors.muted, ...type.semibold },
+  controls: { paddingHorizontal: 16, gap: 12 },
+  conversation: { padding: 16, paddingTop: 20, gap: 14 },
+  stats: { alignSelf: 'center', color: colors.muted, fontSize: 12, ...type.semibold, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, overflow: 'hidden' },
+  pipeline: { marginBottom: 8 },
+  error: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 16, backgroundColor: colors.dangerSoft, borderColor: 'rgba(192,83,58,0.2)', borderWidth: 1 },
+  errorText: { flex: 1, color: colors.danger, fontSize: 13, ...type.medium },
+  footer: { alignItems: 'center', paddingTop: 10 },
+  hint: { color: colors.muted, fontFamily: fonts.serifItalic, fontSize: 17, height: 36, lineHeight: 36 },
+});
