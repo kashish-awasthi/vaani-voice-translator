@@ -11,6 +11,13 @@ In **conversation mode**, two people who speak different languages share one pho
 ![Tests](https://img.shields.io/badge/tests-9%20passing-6E9B6A)
 
 <p align="center">
+  <img src="screenshots/demo.gif" width="300" alt="Demo: an English and Hindi conversation translated live, with the direction switching automatically">
+  <br>
+  <sub>English ⇄ Hindi conversation: live captions, then each sentence is translated for the other person.<br>
+  Recorded from the app's web build, fed with synthetic voices (macOS text-to-speech).</sub>
+</p>
+
+<p align="center">
   <img src="screenshots/1-home.jpg" width="250" alt="Home screen with language cards and how-it-works pipeline">
   <img src="screenshots/2-listening.jpg" width="250" alt="Listening: live pipeline, live caption and voice waveform">
   <img src="screenshots/3-conversation.jpg" width="250" alt="Conversation: translated messages with timings and auto-detected language">
