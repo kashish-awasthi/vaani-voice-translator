@@ -18,9 +18,10 @@ In **conversation mode**, two people who speak different languages share one pho
 </p>
 
 <p align="center">
-  <img src="screenshots/1-home.jpg" width="250" alt="Home screen with language cards and how-it-works pipeline">
-  <img src="screenshots/2-listening.jpg" width="250" alt="Listening: live pipeline, live caption and voice waveform">
-  <img src="screenshots/3-conversation.jpg" width="250" alt="Conversation: translated messages with timings and auto-detected language">
+  <img src="screenshots/1-home.jpg" width="200" alt="Home screen with language picker and how-it-works pipeline">
+  <img src="screenshots/2-listening.jpg" width="200" alt="Listening: live pipeline, live caption and voice waveform">
+  <img src="screenshots/3-conversation.jpg" width="200" alt="Conversation: translated messages with timings and auto-detected language">
+  <img src="screenshots/5-dark.jpg" width="200" alt="Dark mode">
 </p>
 
 ---
@@ -34,6 +35,7 @@ In **conversation mode**, two people who speak different languages share one pho
 - **Visible metrics.** Every message shows Whisper time, translation time and language-detection confidence. A session line shows the average delay.
 - **18 languages**, including Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam, Punjabi and Urdu.
 - **Resilient translation layer.** Free APIs are tried in order, with an in-memory cache for repeated phrases.
+- **Built for real use.** Server status check before you start, clean recovery if the connection drops mid-conversation, copy and replay for every translation, haptic feedback, screen-reader labels, and light and dark mode.
 
 ## Architecture
 
@@ -127,9 +129,11 @@ VoiceTranslator/
 │   └── src/
 │       ├── useMicrophone.js      phone mic → 16 kHz PCM (expo-audio)
 │       ├── useMicrophone.web.js  browser mic (Web Audio API)
-│       ├── useTranslator.js      WebSocket client
+│       ├── useTranslator.js      WebSocket client (handles dropped connections)
+│       ├── useServerStatus.js    /health check: "Server online / offline"
 │       ├── audio.js              resampling
-│       └── components/           pipeline, message cards, mic, waveform…
+│       ├── theme.js              design system: light/dark colours, type scale, spacing
+│       └── components/           language picker, message cards, control dock, settings…
 └── screenshots/
 ```
 

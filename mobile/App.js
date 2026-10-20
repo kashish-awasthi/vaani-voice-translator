@@ -1,49 +1,44 @@
-import {
-  PlayfairDisplay_400Regular_Italic,
-  PlayfairDisplay_600SemiBold,
-  PlayfairDisplay_700Bold,
-} from '@expo-google-fonts/playfair-display';
 import { Ionicons } from '@expo/vector-icons';
-import { useFonts } from 'expo-font';
+import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Background } from './src/components/Background';
+import { ControlDock } from './src/components/ControlDock';
 import { EmptyState } from './src/components/EmptyState';
 import { LanguageBar } from './src/components/LanguageBar';
-import { LiveCaption } from './src/components/LiveCaption';
-import { MessageBubble } from './src/components/MessageBubble';
-import { MicButton } from './src/components/MicButton';
-import { ModeSwitch } from './src/components/ModeSwitch';
-import { Pipeline } from './src/components/Pipeline';
+import { MessageCard } from './src/components/MessageCard';
+import { SegmentedControl } from './src/components/SegmentedControl';
 import { SettingsSheet } from './src/components/SettingsSheet';
-import { Sheen } from './src/components/Sheen';
-import { Waveform } from './src/components/Waveform';
 import { DEFAULT_SERVER_URL } from './src/config';
 import { getLanguage, voiceFor } from './src/languages';
-import { colors, fonts, type } from './src/theme';
+import { radius, spacing, ThemeProvider, type, useStyles, useTheme } from './src/theme';
 import { useMicrophone } from './src/useMicrophone';
+import { useServerStatus } from './src/useServerStatus';
 import { useTranslator } from './src/useTranslator';
 
-export default function App() {
-  const [fontsLoaded] = useFonts({ PlayfairDisplay_400Regular_Italic, PlayfairDisplay_600SemiBold, PlayfairDisplay_700Bold });
+const MODES = [
+  { value: 'two-way', label: 'Conversation' },
+  { value: 'one-way', label: 'Captions' },
+];
 
+export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <View style={{ flex: 1, backgroundColor: colors.background, overflow: 'hidden' }}>
-        <Background />
-        {fontsLoaded && <TranslatorScreen />}
-      </View>
+      <ThemeProvider>
+        <TranslatorScreen />
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
 
 function TranslatorScreen() {
+  const styles = useStyles(makeStyles);
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+
   const [mode, setMode] = useState('two-way'); // 'two-way' conversation, or 'one-way' captions
   const [langA, setLangA] = useState('en');
   const [langB, setLangB] = useState('hi');
@@ -51,12 +46,15 @@ function TranslatorScreen() {
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [localError, setLocalError] = useState(null);
-  const [speaking, setSpeaking] = useState(false); // true while the phone reads a translation aloud
+  const [speaking, setSpeaking] = useState(false); // the phone is reading a translation aloud
 
   const translator = useTranslator();
-  const level = useRef(new Animated.Value(0)).current; // microphone loudness 0..1, drives the mic glow
+  const live = translator.status === 'live';
+  const server = useServerStatus(serverUrl, live);
+
+  const level = useRef(new Animated.Value(0)).current; // microphone loudness 0..1, drives the mic ring
   const levelRef = useRef(0); // same value, read by the waveform
-  const speakingCount = useRef(0); // > 0 while the phone is reading a translation aloud
+  const speakingCount = useRef(0);
   const autoSpeakRef = useRef(autoSpeak);
   autoSpeakRef.current = autoSpeak;
 
@@ -78,23 +76,23 @@ function TranslatorScreen() {
     Speech.speak(text, { language: voiceFor(language), onDone: done, onStopped: done, onError: done });
   }
 
-  function onFinal(msg) {
-    if (autoSpeakRef.current && msg.translation) speak(msg.translation, msg.target);
+  function stopMic() {
+    mic.stop();
+    levelRef.current = 0;
+    level.setValue(0);
   }
 
-  const live = translator.status === 'live';
-
   async function toggleListening() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setLocalError(null);
+    translator.clearError();
     if (live) {
-      mic.stop();
-      levelRef.current = 0;
-      level.setValue(0);
+      stopMic();
       translator.finish();
       return;
     }
     if (langA === langB) {
-      setLocalError('Pick two different languages.');
+      setLocalError('Choose two different languages.');
       return;
     }
     // two-way: Whisper picks between A and B and the server translates to the other one
@@ -102,10 +100,14 @@ function TranslatorScreen() {
     const languages = mode === 'two-way' ? [langA, langB] : [langA];
     const target = mode === 'two-way' ? null : langB;
     try {
-      await translator.connect(serverUrl, languages, target, onFinal);
+      await translator.connect(serverUrl, languages, target, {
+        onFinal: (msg) => autoSpeakRef.current && msg.translation && speak(msg.translation, msg.target),
+        onLost: stopMic, // server stopped or Wi-Fi dropped: stop recording too
+      });
       await mic.start();
     } catch (e) {
       translator.disconnect();
+      stopMic();
       if (e.message !== 'connection failed') setLocalError(e.message);
     }
   }
@@ -116,32 +118,38 @@ function TranslatorScreen() {
   const error = localError || translator.error;
   const { messages, partial } = translator;
 
-  // which pipeline step is happening right now: 0 Listen, 1 Whisper, 2 Translate, 3 Speak
+  // which pipeline step is happening now: 0 Listen, 1 Whisper, 2 Translate, 3 Speak (-1 = idle)
   const stage = speaking ? 3 : translator.status === 'finishing' ? 2 : partial.text ? 1 : live ? 0 : -1;
   const avgSeconds = messages.length
     ? (messages.reduce((sum, m) => sum + m.timing_ms.speech + m.timing_ms.translate, 0) / messages.length / 1000).toFixed(1)
     : null;
+  const speakerOf = (lang) => (mode === 'one-way' ? null : lang === langB ? 'B' : 'A');
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top + 6 }]}>
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+
       {/* Header */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <View style={styles.brandRow}>
-            <Text style={styles.brand}>Vaani</Text>
-            <Sheen radius={6} width={0} style={styles.brandDot} />
-          </View>
-          <Text style={styles.tagline}>Live voice translator</Text>
+          <Text style={styles.title} accessibilityRole="header">
+            Vaani
+          </Text>
+          <ServerStatus status={live ? 'live' : server} />
         </View>
-        <StatusPill status={translator.status} />
-        <Pressable onPress={() => setSettingsOpen(true)} style={styles.iconButton} hitSlop={8}>
-          <Ionicons name="options-outline" size={20} color={colors.ink} />
+        <Pressable
+          onPress={() => setSettingsOpen(true)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.iconButton, pressed && { opacity: 0.6 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+        >
+          <Ionicons name="settings-outline" size={20} color={colors.text} />
         </Pressable>
       </View>
 
-      {/* Mode + languages */}
       <View style={styles.controls}>
-        <ModeSwitch value={mode} onChange={setMode} disabled={live} />
+        <SegmentedControl options={MODES} value={mode} onChange={setMode} disabled={live} />
         <LanguageBar mode={mode} langA={langA} langB={langB} onChangeA={setLangA} onChangeB={setLangB} disabled={live} />
       </View>
 
@@ -154,43 +162,53 @@ function TranslatorScreen() {
         showsVerticalScrollIndicator={false}
       >
         {messages.length > 0 && (
-          // session summary: handy numbers for demos and screenshots
           <Text style={styles.stats}>
-            {messages.length} {messages.length === 1 ? 'sentence' : 'sentences'} · avg {avgSeconds}s ·{' '}
-            {getLanguage(langA).code.toUpperCase()} {mode === 'two-way' ? '⇄' : '→'} {getLanguage(langB).code.toUpperCase()}
+            {messages.length} {messages.length === 1 ? 'sentence' : 'sentences'} · average {avgSeconds} s ·{' '}
+            {getLanguage(langA).name} {mode === 'two-way' ? '⇄' : '→'} {getLanguage(langB).name}
           </Text>
         )}
-        {messages.length === 0
-          ? !live && <EmptyState mode={mode} />
-          : messages.map((msg) => (
-              <MessageBubble
-                key={msg.key}
-                msg={msg}
-                right={mode === 'two-way' && msg.lang === langB}
-                onReplay={() => speak(msg.translation, msg.target)}
-              />
-            ))}
+        {messages.length === 0 && !live ? (
+          <EmptyState mode={mode} />
+        ) : (
+          messages.map((msg) => (
+            <MessageCard
+              key={msg.key}
+              msg={msg}
+              speaker={speakerOf(msg.lang)}
+              alignEnd={speakerOf(msg.lang) === 'B'}
+              onPlay={() => speak(msg.translation, msg.target)}
+            />
+          ))
+        )}
       </ScrollView>
 
-      {stage >= 0 && (
-        <View style={styles.pipeline}>
-          <Pipeline active={stage} />
-        </View>
-      )}
-      <LiveCaption text={partial.text} lang={partial.lang} listening={live} />
-
       {error ? (
-        <View style={styles.error}>
+        <View style={styles.error} accessibilityRole="alert">
           <Ionicons name="alert-circle" size={18} color={colors.danger} />
           <Text style={styles.errorText}>{error}</Text>
+          <Pressable
+            onPress={() => {
+              setLocalError(null);
+              translator.clearError();
+            }}
+            hitSlop={10}
+            accessibilityLabel="Dismiss"
+          >
+            <Ionicons name="close" size={18} color={colors.danger} />
+          </Pressable>
         </View>
       ) : null}
 
-      {/* Microphone */}
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 6 }]}>
-        {live ? <Waveform levelRef={levelRef} active={live} /> : <Text style={styles.hint}>{hintText(translator.status)}</Text>}
-        <MicButton status={translator.status} level={level} onPress={toggleListening} />
-      </View>
+      <ControlDock
+        status={translator.status}
+        stage={stage}
+        partial={partial}
+        level={level}
+        levelRef={levelRef}
+        onPressMic={toggleListening}
+        bottomInset={insets.bottom}
+        hint={hintText(translator.status, mode, server)}
+      />
 
       <SettingsSheet
         visible={settingsOpen}
@@ -200,27 +218,36 @@ function TranslatorScreen() {
         autoSpeak={autoSpeak}
         onAutoSpeak={setAutoSpeak}
         onClear={translator.clear}
+        messageCount={messages.length}
       />
     </View>
   );
 }
 
-function StatusPill({ status }) {
-  const live = status === 'live';
-  const color = live ? colors.live : status === 'idle' ? colors.dim : colors.gold;
-  const label = { idle: 'Offline', connecting: 'Connecting', live: 'Live', finishing: 'Finishing' }[status];
+function ServerStatus({ status }) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
+  const map = {
+    checking: { color: colors.textTertiary, text: 'Checking server…' },
+    online: { color: colors.success, text: 'Server online' },
+    offline: { color: colors.danger, text: 'Server offline' },
+    live: { color: colors.live, text: 'Live' },
+  };
+  const s = map[status];
   return (
-    <View style={styles.pill}>
-      <View style={[styles.pillDot, { backgroundColor: color }]} />
-      <Text style={[styles.pillText, live && { color: colors.live }]}>{label}</Text>
+    <View style={styles.status} accessibilityLabel={s.text}>
+      <View style={[styles.statusDot, { backgroundColor: s.color }]} />
+      <Text style={styles.statusText}>{s.text}</Text>
     </View>
   );
 }
 
-function hintText(status) {
-  if (status === 'connecting') return 'Connecting to server…';
-  if (status === 'finishing') return 'Finishing the last sentence…';
-  return 'Tap to start speaking';
+function hintText(status, mode, server) {
+  if (status === 'connecting') return 'Connecting…';
+  if (status === 'finishing') return 'Translating the last sentence…';
+  if (status === 'live') return mode === 'two-way' ? 'Listening to both speakers · tap to stop' : 'Listening · tap to stop';
+  if (server === 'offline') return 'Server offline · check the address in Settings';
+  return 'Tap to start';
 }
 
 // how loud a chunk of 16-bit audio is, scaled to 0..1 for the animations
@@ -233,23 +260,36 @@ function loudness(chunk) {
   return Math.min(1, rms * 8);
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, marginBottom: 14 },
-  brandRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
-  brand: { color: colors.ink, fontFamily: fonts.serifBold, fontSize: 36, lineHeight: 42 },
-  brandDot: { width: 9, height: 9, marginBottom: 10 },
-  tagline: { color: colors.muted, fontSize: 12, ...type.medium },
-  iconButton: { width: 42, height: 42, borderRadius: 15, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  pill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
-  pillDot: { width: 7, height: 7, borderRadius: 4 },
-  pillText: { fontSize: 12, color: colors.muted, ...type.semibold },
-  controls: { paddingHorizontal: 16, gap: 12 },
-  conversation: { padding: 16, paddingTop: 20, gap: 14 },
-  stats: { alignSelf: 'center', color: colors.muted, fontSize: 12, ...type.semibold, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, overflow: 'hidden' },
-  pipeline: { marginBottom: 8 },
-  error: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 16, backgroundColor: colors.dangerSoft, borderColor: 'rgba(192,83,58,0.2)', borderWidth: 1 },
-  errorText: { flex: 1, color: colors.danger, fontSize: 13, ...type.medium },
-  footer: { alignItems: 'center', paddingTop: 10 },
-  hint: { color: colors.muted, fontFamily: fonts.serifItalic, fontSize: 17, height: 36, lineHeight: 36 },
-});
+const makeStyles = (c) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: c.background },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md },
+    title: { ...type.largeTitle, color: c.text },
+    status: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+    statusDot: { width: 7, height: 7, borderRadius: 4 },
+    statusText: { ...type.footnote, color: c.textSecondary },
+    iconButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: c.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    controls: { paddingHorizontal: spacing.lg, gap: spacing.md },
+    conversation: { padding: spacing.lg, gap: spacing.md },
+    stats: { ...type.caption, color: c.textTertiary, textAlign: 'center' },
+    error: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginHorizontal: spacing.lg,
+      marginBottom: spacing.sm,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: c.dangerSoft,
+    },
+    errorText: { flex: 1, ...type.footnote, color: c.danger },
+  });

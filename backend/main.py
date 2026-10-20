@@ -5,6 +5,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
 from asr import StreamingTranscriber, get_model, transcribe
 from translator import other_language, translate
@@ -19,6 +20,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Voice Translator", lifespan=lifespan)
+# let the web version of the app (served from another port) call /health from the browser
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"])
 
 
 @app.get("/health")

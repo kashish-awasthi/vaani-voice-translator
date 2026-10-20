@@ -1,17 +1,20 @@
 {
   "expo": {
     "name": "Vaani",
-    "slug": "mobile",
+    "slug": "vaani",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Vaani uses the microphone to hear and translate what you say."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#7A5A45",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -21,9 +24,27 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-audio",
-      "expo-font"
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Vaani uses the microphone to hear and translate what you say."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "backgroundColor": "#F7F5F2",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#121110"
+          }
+        }
+      ],
+      "expo-font",
+      "expo-asset"
     ],
-    "backgroundColor": "#F7F2EC"
+    "backgroundColor": "#F7F5F2"
   }
 }
