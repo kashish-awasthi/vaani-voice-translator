@@ -7,7 +7,7 @@ In **conversation mode**, two people who speak different languages share one pho
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-WebSockets-009688?logo=fastapi&logoColor=white)
 ![Whisper](https://img.shields.io/badge/Whisper-faster--whisper-412991)
-![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2058-61DAFB?logo=react&logoColor=black)
+![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2057-61DAFB?logo=react&logoColor=black)
 ![Tests](https://img.shields.io/badge/tests-9%20passing-6E9B6A)
 
 <p align="center">

@@ -43,7 +43,8 @@
         }
       ],
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      "expo-status-bar"
     ],
     "backgroundColor": "#F7F5F2"
   }
