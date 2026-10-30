@@ -41,5 +41,9 @@ export function useMicrophone(onChunk) {
     nodes.current = null;
   }
 
-  return { start, stop };
+  // browsers can record and play sound at the same time, so nothing to do here
+  const pauseForPlayback = async () => {};
+  const resumeAfterPlayback = async () => {};
+
+  return { start, stop, pauseForPlayback, resumeAfterPlayback };
 }

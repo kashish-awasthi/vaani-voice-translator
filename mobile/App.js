@@ -66,13 +66,20 @@ function TranslatorScreen() {
     if (speakingCount.current === 0) translator.sendAudio(chunk);
   });
 
-  function speak(text, language) {
+  async function speak(text, language) {
     speakingCount.current += 1;
     setSpeaking(true);
     const done = () => {
       speakingCount.current = Math.max(0, speakingCount.current - 1);
-      if (speakingCount.current === 0) setSpeaking(false);
+      if (speakingCount.current > 0) return;
+      setSpeaking(false);
+      mic.resumeAfterPlayback().catch((e) => setLocalError(e.message));
     };
+    try {
+      await mic.pauseForPlayback();
+    } catch (e) {
+      setLocalError(e.message);
+    }
     Speech.speak(text, { language: voiceFor(language), onDone: done, onStopped: done, onError: done });
   }
 
@@ -95,6 +102,7 @@ function TranslatorScreen() {
       setLocalError('Choose two different languages.');
       return;
     }
+    Speech.stop(); // don't talk over the person who is about to speak
     // two-way: Whisper picks between A and B and the server translates to the other one
     // one-way: always A -> B
     const languages = mode === 'two-way' ? [langA, langB] : [langA];
